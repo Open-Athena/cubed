@@ -298,6 +298,16 @@ class Plan:
         )
         dag = finalized_plan.dag
 
+        region_keys = kwargs.pop("region_keys", None)
+        if region_keys is not None:
+            arrays_to_keys = traverse_array_keys(dag, region_keys)
+            # replace each array with the predecessor op that produces it
+            mappables = {
+                predecessor_op_for_array(dag, k): v for k, v in arrays_to_keys.items()
+            }
+        else:
+            mappables = None
+
         compute_id = f"compute-{datetime.now().strftime('%Y%m%dT%H%M%S.%f')}"
 
         if callbacks is not None:
@@ -309,6 +319,7 @@ class Plan:
             callbacks=callbacks,
             resume=resume,
             spec=spec,
+            mappables=mappables,
             **kwargs,
         )
         if callbacks is not None:
@@ -598,6 +609,18 @@ def _merge_dicts(a: dict[_K, _V], b: dict[_K, _V], f: Callable[[_V, _V], _V]):
     # Update with `f()` applied to the intersection
     merged.update({k: f(a[k], b[k]) for k in a.keys() & b.keys()})
     return merged
+
+
+def predecessor_op_for_array(dag, array_name):
+    """Return an array node's op predecessor.
+
+    Note that each input source array is produced by a single predecessor op.
+    """
+    from .optimization import predecessors_unordered
+
+    pre_list = list(predecessors_unordered(dag, array_name))
+    assert len(pre_list) == 1  # each array is produced by a single op
+    return pre_list[0]
 
 
 def traverse_array_keys(

@@ -166,7 +166,7 @@ def store(sources: Union["Array", Sequence["Array"]], targets, executor=None, **
     compute(*arrays, executor=executor, _return_in_memory_array=False, **kwargs)
 
 
-def to_zarr(x: "Array", store, path=None, executor=None, **kwargs):
+def to_zarr(x: "Array", store, path=None, region=None, executor=None, **kwargs):
     """Save an array to Zarr storage.
 
     Note that this operation is eager, and will run the computation
@@ -198,7 +198,18 @@ def to_zarr(x: "Array", store, path=None, executor=None, **kwargs):
         target_store=store,
         target_path=path,
     )
-    out.compute(executor=executor, _return_in_memory_array=False, **kwargs)
+    if region is not None:
+        # calculate chunk keys from region selection
+        indexer = _create_zarr_indexer(region, x.shape, x.chunksize)
+        region_keys = {out.name: [chunk_coords for (chunk_coords, _, _) in indexer]}
+    else:
+        region_keys = None
+    out.compute(
+        executor=executor,
+        _return_in_memory_array=False,
+        region_keys=region_keys,
+        **kwargs,
+    )
 
 
 def blockwise(

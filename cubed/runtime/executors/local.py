@@ -44,10 +44,15 @@ class SingleThreadedExecutor(DagExecutor):
         compute_id: Optional[str] = None,
         **kwargs,
     ) -> None:
+        mappables = kwargs.pop("mappables", None)
         for name, node in visit_nodes(dag, resume=resume):
             handle_operation_start_callbacks(callbacks, name)
             pipeline: CubedPipeline = node["pipeline"]
-            for m in pipeline.mappable:
+            if mappables is not None and name in mappables:
+                mappable = mappables[name]
+            else:
+                mappable = pipeline.mappable
+            for m in mappable:
                 result = exec_stage_func(
                     m,
                     pipeline.function,
