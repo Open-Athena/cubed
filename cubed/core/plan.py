@@ -4,9 +4,10 @@ import inspect
 import shutil
 import tempfile
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from functools import lru_cache
-from typing import Callable, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 import networkx as nx
 import zarr
@@ -584,3 +585,62 @@ def create_zarr_arrays(lazy_zarr_arrays, allowed_mem, reserved_mem):
         num_tasks=num_tasks,
         fusable=False,
     )
+
+
+_K = TypeVar("_K")
+_V = TypeVar("_V")
+
+
+# based on https://stackoverflow.com/a/16560975
+def _merge_dicts(a: dict[_K, _V], b: dict[_K, _V], f: Callable[[_V, _V], _V]):
+    # Start with symmetric difference; keys either in a or b, but not both
+    merged = {k: a.get(k, b.get(k)) for k in a.keys() ^ b.keys()}
+    # Update with `f()` applied to the intersection
+    merged.update({k: f(a[k], b[k]) for k in a.keys() & b.keys()})
+    return merged
+
+
+def traverse_array_keys(
+    dag: nx.MultiDiGraph,
+    arrays_to_keys: Dict[str, List[Tuple[int, ...]]],
+) -> Dict[str, List[Tuple[int, ...]]]:
+    """Find all array keys that a set of initial array keys depend on transitively."""
+
+    # iterate in reverse order to executors since we are traversing from outputs to inputs
+    for name, d in reversed(list(visit_nodes(dag))):
+        if "primitive_op" in d:
+            primitive_op = d["primitive_op"]
+            pipeline: CubedPipeline = primitive_op.pipeline
+            blockwise_spec = pipeline.config
+            if blockwise_spec is not None:
+                key_function = blockwise_spec.key_function
+                # find the arrays that this op produces
+                for _, array_name in dag.out_edges(
+                    name
+                ):  # see also successors_unordered in optimization
+                    # note that the keys will be the same for each array since
+                    # the current implementation of multiple outputs can only produce arrays with the same chunking
+                    new_arrays_to_keys = _get_predecessor_keys(
+                        key_function, arrays_to_keys.get(array_name, [])
+                    )
+                    arrays_to_keys = _merge_dicts(
+                        arrays_to_keys,
+                        new_arrays_to_keys,
+                        lambda a, b: list(set(a) | set(b)),
+                    )
+    return arrays_to_keys
+
+
+def _get_predecessor_keys(
+    key_function: Callable[[Any], Any], out_coords_iter: List[Tuple[int, ...]]
+) -> Dict[str, List[Tuple[int, ...]]]:
+    arrays_to_keys = defaultdict(list)
+    for out_coords in out_coords_iter:
+        out_coords_tuple = tuple(out_coords)
+        out_key = ("out",) + out_coords_tuple  # array name is ignored by key_function
+        name_chunk_inds = key_function(out_key)
+        for name_chunk_ind in name_chunk_inds:
+            name = name_chunk_ind[0]
+            coords = name_chunk_ind[1:]
+            arrays_to_keys[name].append(coords)
+    return arrays_to_keys
