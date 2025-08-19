@@ -86,13 +86,10 @@ jobs:
         run: |
           # Run tests that are known to work with CuPy
           # Skip processes executor which doesn't work with CuPy
-          pytest -v \
-            cubed/tests/test_array_api.py::test_arange \
-            cubed/tests/test_array_api.py::test_asarray \
-            cubed/tests/test_array_api.py::test_ones \
-            cubed/tests/test_array_api.py::test_zeros \
-            cubed/tests/test_array_api.py::test_full \
-            -k "not processes" \
+          # Use -k to select specific tests by pattern
+          pytest -v cubed/tests/test_array_api.py \
+            -k "test_arange or test_ones or test_asarray" \
+            --ignore-glob="*processes*" \
             --maxfail=5 2>&1 | tee pytest_results.txt || echo "Note: Some tests failed (investigating GPU/zarr compatibility)"
 
       - name: Document known issues
