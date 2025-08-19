@@ -79,7 +79,16 @@ jobs:
         run: |
           echo "Running basic GPU functionality tests..."
           python cubed/tests/test_gpu_basic.py 2>&1 | tee basic_test_results.txt
-          echo "Exit code: $?"
+          echo "Basic tests exit code: $?"
+
+      - name: Test CuPy with cubed (comprehensive)
+        env:
+          CUBED_BACKEND_ARRAY_API_MODULE: "array_api_compat.cupy"
+        continue-on-error: true
+        run: |
+          echo "Running comprehensive GPU functionality tests..."
+          python cubed/tests/test_gpu_comprehensive.py 2>&1 | tee comprehensive_test_results.txt
+          echo "Comprehensive tests exit code: $?"
 
       - name: Run array API tests with CuPy
         env:
@@ -142,4 +151,5 @@ jobs:
             performance_results.txt
             cupy_test_results.md
             basic_test_results.txt
+            comprehensive_test_results.txt
             pytest_results.txt
