@@ -77,7 +77,9 @@ jobs:
         env:
           CUBED_BACKEND_ARRAY_API_MODULE: "array_api_compat.cupy"
         run: |
-          python cubed/tests/test_gpu_basic.py | tee basic_test_results.txt
+          echo "Running basic GPU functionality tests..."
+          python cubed/tests/test_gpu_basic.py 2>&1 | tee basic_test_results.txt
+          echo "Exit code: $?"
 
       - name: Run array API tests with CuPy
         env:
@@ -118,9 +120,11 @@ jobs:
 
       - name: Run performance comparison
         run: |
+          echo "Running GPU performance benchmarks..."
           python cubed/tests/benchmark_gpu.py \
             --instance-type "${{ inputs.instance_type || 'g6.2xlarge' }}" \
-            | tee performance_results.txt
+            2>&1 | tee performance_results.txt
+          echo "Benchmark exit code: $?"
 
       - name: Create test summary
         if: always()
