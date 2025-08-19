@@ -21,6 +21,7 @@ on:
       - 'cubed/storage/virtual.py'
       - 'cubed/tests/**'
       - '.github/workflows/gpu-tests.yml'
+      - '.github/scripts/**'
       - 'pyproject.toml'
   schedule:
     # Run weekly on Mondays at 03:00 UTC
@@ -76,28 +77,7 @@ jobs:
         env:
           CUBED_BACKEND_ARRAY_API_MODULE: "array_api_compat.cupy"
         run: |
-          python -c "
-import cubed
-import cubed.array_api as xp
-
-spec = cubed.Spec('/tmp/test', allowed_mem='1GB')
-
-# Test basic array creation and computation
-a = xp.ones((100, 100), chunks=(50, 50), spec=spec)
-result = a.compute()
-print(f'✓ Basic array creation: shape={result.shape}, sum={result.sum()}')
-
-# Test array operations
-b = xp.arange(1000, chunks=(100,), spec=spec)
-result = xp.sum(b).compute()
-print(f'✓ Array operations: sum of arange(1000)={result}')
-
-# Test chunked operations
-c = xp.ones((1000, 1000), chunks=(100, 100), spec=spec)
-d = c + 1
-result = d.compute()
-print(f'✓ Chunked operations: shape={result.shape}, mean={result.mean()}')
-"
+          python cubed/tests/test_gpu_basic.py | tee basic_test_results.txt
 
       - name: Run array API tests with CuPy
         env:
@@ -113,26 +93,13 @@ print(f'✓ Chunked operations: shape={result.shape}, mean={result.mean()}')
             cubed/tests/test_array_api.py::test_zeros \
             cubed/tests/test_array_api.py::test_full \
             -k "not processes" \
-            --maxfail=5 || echo "Note: Some tests failed (investigating GPU/zarr compatibility)"
+            --maxfail=5 2>&1 | tee pytest_results.txt || echo "Note: Some tests failed (investigating GPU/zarr compatibility)"
 
       - name: Document known issues
         if: always()
         run: |
-          echo "## Known CuPy/Zarr Integration Issues" > cupy_test_results.md
-          echo "" >> cupy_test_results.md
-          echo "Current testing shows that CuPy arrays work with cubed's core functionality," >> cupy_test_results.md
-          echo "but there are compatibility issues with zarr's buffer handling when using" >> cupy_test_results.md
-          echo "GPU-backed arrays. The error 'Implicit conversion to a NumPy array is not allowed'" >> cupy_test_results.md
-          echo "occurs when zarr tries to slice CuPy arrays." >> cupy_test_results.md
-          echo "" >> cupy_test_results.md
-          echo "Working features:" >> cupy_test_results.md
-          echo "- Basic array creation and computation" >> cupy_test_results.md
-          echo "- Array operations (when not involving zarr storage)" >> cupy_test_results.md
-          echo "- Tests using single-threaded or threads executors" >> cupy_test_results.md
-          echo "" >> cupy_test_results.md
-          echo "Areas needing work:" >> cupy_test_results.md
-          echo "- Integration with zarr GPU buffers" >> cupy_test_results.md
-          echo "- Tests involving from_array with CuPy arrays" >> cupy_test_results.md
+          chmod +x .github/scripts/document_gpu_issues.sh
+          .github/scripts/document_gpu_issues.sh
 
   gpu-performance-test:
     name: GPU Performance Comparison
@@ -154,87 +121,15 @@ print(f'✓ Chunked operations: shape={result.shape}, mean={result.mean()}')
 
       - name: Run performance comparison
         run: |
-          python -c "
-import time
-import os
-import cubed
-import cubed.array_api as xp
-
-def benchmark_backend(name, backend_module):
-    print(f'\\n{"="*60}')
-    print(f'Testing {name}')
-    print("="*60)
-
-    os.environ['CUBED_BACKEND_ARRAY_API_MODULE'] = backend_module
-
-    # Reload to pick up new backend
-    import importlib
-    import cubed.backend_array_api
-    importlib.reload(cubed.backend_array_api)
-
-    spec = cubed.Spec('/tmp/bench', allowed_mem='4GB')
-
-    # Test 1: Array sum
-    start = time.time()
-    a = xp.arange(10_000_000, chunks=(1_000_000,), spec=spec)
-    result = xp.sum(a).compute()
-    elapsed = time.time() - start
-    print(f'  Sum of 10M elements: {elapsed:.3f}s (result: {result})')
-
-    # Test 2: Array operations
-    start = time.time()
-    b = xp.ones((5000, 5000), chunks=(500, 500), spec=spec)
-    c = b * 2 + 1
-    result = c[0, 0].compute()
-    elapsed = time.time() - start
-    print(f'  Array operations (5000x5000): {elapsed:.3f}s (sample value: {result})')
-
-    # Test 3: Reductions
-    start = time.time()
-    d = xp.arange(1_000_000, chunks=(100_000,), spec=spec)
-    mean_val = xp.mean(d).compute()
-    elapsed = time.time() - start
-    print(f'  Mean of 1M elements: {elapsed:.3f}s (result: {mean_val})')
-
-print('Cubed GPU Backend Performance Comparison')
-print('Instance type: ${{ inputs.instance_type || "g6.2xlarge" }}')
-
-# Test CPU (NumPy)
-benchmark_backend('NumPy (CPU)', 'numpy')
-
-# Test GPU (CuPy)
-try:
-    import cupy
-    benchmark_backend('CuPy (GPU)', 'array_api_compat.cupy')
-except Exception as e:
-    print(f'\\nCuPy test failed: {e}')
-" | tee performance_results.txt
+          python cubed/tests/benchmark_gpu.py \
+            --instance-type "${{ inputs.instance_type || 'g6.2xlarge' }}" \
+            | tee performance_results.txt
 
       - name: Create test summary
         if: always()
         run: |
-          echo "## GPU Test Summary" > test_summary.md
-          echo "" >> test_summary.md
-          echo "**Date:** $(date)" >> test_summary.md
-          echo "**Instance:** ${{ inputs.instance_type || 'g6.2xlarge' }}" >> test_summary.md
-          echo "" >> test_summary.md
-          echo "### GPU Information" >> test_summary.md
-          echo '```' >> test_summary.md
-          nvidia-smi --query-gpu=name,memory.total,driver_version,compute_cap --format=csv >> test_summary.md
-          echo '```' >> test_summary.md
-          echo "" >> test_summary.md
-
-          if [ -f performance_results.txt ]; then
-            echo "### Performance Results" >> test_summary.md
-            echo '```' >> test_summary.md
-            cat performance_results.txt >> test_summary.md
-            echo '```' >> test_summary.md
-          fi
-
-          if [ -f cupy_test_results.md ]; then
-            echo "" >> test_summary.md
-            cat cupy_test_results.md >> test_summary.md
-          fi
+          chmod +x .github/scripts/create_test_summary.sh
+          .github/scripts/create_test_summary.sh "${{ inputs.instance_type || 'g6.2xlarge' }}"
 
       - name: Upload test artifacts
         if: always()
@@ -245,3 +140,5 @@ except Exception as e:
             test_summary.md
             performance_results.txt
             cupy_test_results.md
+            basic_test_results.txt
+            pytest_results.txt
